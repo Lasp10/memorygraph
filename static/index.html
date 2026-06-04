@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MemoryGraph</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <div class="logo">🧠</div>
+  <h1>MemoryGraph</h1>
+  <nav>
+    <button class="active" data-view="view-ingest">Ingest</button>
+    <button data-view="view-people">People</button>
+    <button data-view="view-search">Search</button>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ── View: Ingest ────────────────────────────────────────────────── -->
+  <div id="view-ingest" class="view active">
+
+    <div id="drop-zone" class="drop-zone">
+      <div class="drop-icon">📂</div>
+      <strong>Drop a .zip of photos here</strong>
+      <p>or click to select a zip file</p>
+    </div>
+
+    <div class="folder-row">
+      <input id="folder-input" type="text" placeholder="…or enter a local folder path, e.g. /Users/you/Photos/Family">
+      <button class="btn" id="process-btn">Process All</button>
+    </div>
+
+    <div id="progress-section" class="progress-section card">
+      <div class="progress-steps">
+        <div class="step-chip" id="step-ingest">1 · Ingesting</div>
+        <div class="step-chip" id="step-faces">2 · Detecting faces</div>
+        <div class="step-chip" id="step-scenes">3 · Tagging scenes</div>
+        <div class="step-chip" id="step-graph">4 · Building graph</div>
+      </div>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar" id="progress-bar"></div>
+      </div>
+      <div class="stats-row">
+        <div class="stat-item">
+          <strong id="stat-photos">0</strong>
+          Photos
+        </div>
+        <div class="stat-item">
+          <strong id="stat-processed">0</strong>
+          Processed
+        </div>
+        <div class="stat-item">
+          <strong id="stat-people">0</strong>
+          People found
+        </div>
+        <div class="stat-item">
+          <strong id="stat-events">0</strong>
+          Events detected
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── View: People ────────────────────────────────────────────────── -->
+  <div id="view-people" class="view">
+    <div class="section-title">People</div>
+    <p class="hint">Label each person cluster. Confirmed names improve search accuracy.</p>
+    <div id="people-grid" class="people-grid">
+      <div class="empty-state">
+        <div class="icon">👥</div>
+        <p>No people found yet.<br>Run the pipeline from the Ingest tab first.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── View: Search ────────────────────────────────────────────────── -->
+  <div id="view-search" class="view">
+    <div class="search-bar-wrap">
+      <input
+        id="search-input"
+        type="text"
+        placeholder="Try: grandma at Christmas · beach photos from the 80s · birthday party"
+        autocomplete="off"
+      >
+      <button class="btn" id="search-btn">Search</button>
+    </div>
+    <div id="results-grid" class="results-grid"></div>
+  </div>
+
+</main>
+
+<!-- ── Lightbox ─────────────────────────────────────────────────────── -->
+<div id="lightbox" class="lightbox" role="dialog" aria-modal="true">
+  <div class="lightbox-inner">
+    <button id="lightbox-close" class="lightbox-close" aria-label="Close">×</button>
+    <img id="lightbox-img" class="lightbox-img" alt="Full photo">
+    <div id="lightbox-meta" class="lightbox-meta"></div>
+  </div>
+</div>
+
+<!-- ── Toast ────────────────────────────────────────────────────────── -->
+<div id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,122 @@
+import json
+import logging
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+from db.database import get_connection
+
+logger = logging.getLogger(__name__)
+
+SCENE_LABELS = [
+    "birthday party", "Christmas", "Thanksgiving", "wedding", "graduation",
+    "beach", "mountains", "park", "backyard", "living room", "kitchen",
+    "school", "church", "restaurant", "vacation", "camping",
+    "baby", "child", "teenager", "adult", "elderly person",
+    "snow", "summer", "autumn", "spring",
+    "sports", "swimming", "playing", "cooking", "opening gifts",
+    "group photo", "portrait", "candid", "formal", "casual",
+    "1960s", "1970s", "1980s", "1990s", "2000s", "2010s",
+]
+
+_model = None
+_chroma_client = None
+_chroma_collection = None
+
+
+def get_model():
+    global _model
+    if _model is None:
+        from sentence_transformers import SentenceTransformer
+        _model = SentenceTransformer("clip-ViT-B-32")
+        logger.info("CLIP model loaded")
+    return _model
+
+
+def get_chroma_collection():
+    global _chroma_client, _chroma_collection
+    if _chroma_collection is None:
+        import chromadb
+        db_dir = Path(__file__).parent.parent / "chroma_db"
+        db_dir.mkdir(exist_ok=True)
+        _chroma_client = chromadb.PersistentClient(path=str(db_dir))
+        _chroma_collection = _chroma_client.get_or_create_collection(
+            name="media_embeddings",
+            metadata={"hnsw:space": "cosine"},
+        )
+        logger.info("ChromaDB collection ready")
+    return _chroma_collection
+
+
+def tag_scenes(limit: int = 0) -> dict:
+    model = get_model()
+    collection = get_chroma_collection()
+
+    with get_connection() as conn:
+        query = "SELECT id, filepath, date_taken FROM media WHERE tags IS NULL"
+        if limit:
+            query += f" LIMIT {limit}"
+        rows = list(conn.execute(query))
+
+    if not rows:
+        return {"tagged": 0}
+
+    # Pre-encode all labels once
+    label_embeddings = model.encode(SCENE_LABELS, convert_to_numpy=True, normalize_embeddings=True)
+
+    tagged = 0
+    for row in rows:
+        media_id = row["id"]
+        filepath = row["filepath"]
+        try:
+            with Image.open(filepath) as img:
+                img_rgb = img.convert("RGB")
+                img_embedding = model.encode(img_rgb, convert_to_numpy=True, normalize_embeddings=True)
+
+            # Cosine similarity (both normalized so dot product works)
+            scores = label_embeddings @ img_embedding
+            top_indices = np.argsort(scores)[::-1]
+            tags = [SCENE_LABELS[i] for i in top_indices if scores[i] > 0.22][:3]
+
+            # Store in ChromaDB
+            existing = collection.get(ids=[media_id])
+            chroma_meta = {
+                "media_id": media_id,
+                "tags": ",".join(tags),
+                "date_taken": row["date_taken"] or "",
+            }
+            if existing["ids"]:
+                collection.update(
+                    ids=[media_id],
+                    embeddings=[img_embedding.tolist()],
+                    metadatas=[chroma_meta],
+                )
+            else:
+                collection.add(
+                    ids=[media_id],
+                    embeddings=[img_embedding.tolist()],
+                    metadatas=[chroma_meta],
+                )
+
+            with get_connection() as conn:
+                conn.execute(
+                    "UPDATE media SET tags = ? WHERE id = ?",
+                    (json.dumps(tags), media_id),
+                )
+
+            tagged += 1
+            logger.info(f"Tagged {filepath}: {tags}")
+
+        except Exception as e:
+            logger.error(f"Scene tagging failed for {filepath}: {e}")
+            with get_connection() as conn:
+                conn.execute("UPDATE media SET tags = ? WHERE id = ?", ("[]", media_id))
+
+    return {"tagged": tagged}
+
+
+def encode_query(query_text: str) -> list[float]:
+    model = get_model()
+    embedding = model.encode(query_text, convert_to_numpy=True, normalize_embeddings=True)
+    return embedding.tolist()
