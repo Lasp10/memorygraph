@@ -41,29 +41,39 @@ const folderInput = document.getElementById('folder-input');
 const processBtn = document.getElementById('process-btn');
 const progressSection = document.getElementById('progress-section');
 
+const IMAGE_EXT_RE = /\.(jpe?g|png|heic|heif|tiff?|bmp|gif)$/i;
+
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
 dropZone.addEventListener('drop', async e => {
   e.preventDefault();
   dropZone.classList.remove('drag-over');
-  const files = [...e.dataTransfer.files];
-  const zip = files.find(f => f.name.endsWith('.zip'));
-  if (zip) {
-    await uploadZip(zip);
-  } else {
-    showToast('Please drop a .zip file or use the folder path below.');
-  }
+  await handleSelectedFiles([...e.dataTransfer.files]);
 });
 
 dropZone.addEventListener('click', () => {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.zip';
+  input.accept = '.zip,.jpg,.jpeg,.png,.heic,.heif,.tiff,.tif,.bmp,.gif';
+  input.multiple = true;
   input.onchange = async () => {
-    if (input.files[0]) await uploadZip(input.files[0]);
+    await handleSelectedFiles([...input.files]);
   };
   input.click();
 });
+
+async function handleSelectedFiles(files) {
+  const zips = files.filter(f => f.name.toLowerCase().endsWith('.zip'));
+  const images = files.filter(f => IMAGE_EXT_RE.test(f.name));
+
+  if (!zips.length && !images.length) {
+    showToast('Please drop photos (.jpg, .png, .heic) or a .zip file.');
+    return;
+  }
+
+  for (const zip of zips) await uploadZip(zip);
+  if (images.length) await uploadFiles(images);
+}
 
 async function uploadZip(file) {
   showToast(`Uploading ${file.name}…`);
@@ -71,6 +81,20 @@ async function uploadZip(file) {
   fd.append('file', file);
   try {
     const r = await fetch('/api/ingest/zip', { method: 'POST', body: fd });
+    const data = await r.json();
+    showToast(`Ingested ${data.ingested} photos, skipped ${data.skipped}`);
+    refreshStats();
+  } catch (e) {
+    showToast('Upload failed: ' + e.message);
+  }
+}
+
+async function uploadFiles(files) {
+  showToast(`Uploading ${files.length} photo${files.length !== 1 ? 's' : ''}…`);
+  const fd = new FormData();
+  files.forEach(f => fd.append('files', f));
+  try {
+    const r = await fetch('/api/ingest/files', { method: 'POST', body: fd });
     const data = await r.json();
     showToast(`Ingested ${data.ingested} photos, skipped ${data.skipped}`);
     refreshStats();

@@ -74,6 +74,17 @@ async def api_ingest_zip(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/ingest/files")
+async def api_ingest_files(files: list[UploadFile] = File(...)):
+    try:
+        file_data = [(f.filename, await f.read()) for f in files]
+        result = ingest.ingest_uploaded_files(file_data)
+        return result
+    except Exception as e:
+        logger.error(f"File ingest error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ── Process: full pipeline ────────────────────────────────────────────────────
 
 @app.post("/api/process/all")

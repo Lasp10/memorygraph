@@ -9,11 +9,17 @@ from pathlib import Path
 
 from PIL import Image, ExifTags
 
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+except ImportError:
+    pillow_heif = None
+
 from db.database import get_connection
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".gif"}
+SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".gif", ".heic", ".heif"}
 UPLOADS_DIR = Path(__file__).parent.parent / "uploads"
 THUMBNAILS_DIR = Path(__file__).parent.parent / "thumbnails"
 THUMBNAIL_SIZE = (300, 300)
@@ -107,6 +113,18 @@ def ingest_folder(folder_path: str) -> dict:
                 skipped += 1
 
     return {"ingested": ingested, "skipped": skipped}
+
+
+def ingest_uploaded_files(files: list[tuple[str, bytes]]) -> dict:
+    extract_dir = UPLOADS_DIR / "files_upload_tmp"
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        for filename, content in files:
+            dest = extract_dir / Path(filename).name
+            dest.write_bytes(content)
+        return ingest_folder(str(extract_dir))
+    finally:
+        shutil.rmtree(extract_dir, ignore_errors=True)
 
 
 def ingest_zip(zip_path: Path) -> dict:
