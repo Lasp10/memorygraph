@@ -6,6 +6,14 @@ Extracts structured data from each image (face encodings, OCR text, scene classi
 
 ---
 
+## Screenshots
+
+| Ingest | People | Search |
+|---|---|---|
+| ![Ingest view](screenshots/ingest.png) | ![People view](screenshots/people.png) | ![Search results](screenshots/search.png) |
+
+---
+
 ## System Requirements
 
 - **Python 3.11+**
