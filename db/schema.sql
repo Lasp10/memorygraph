@@ -6,8 +6,10 @@ CREATE TABLE IF NOT EXISTS media (
     date_taken TEXT,
     date_ingested TEXT NOT NULL,
     processed INTEGER DEFAULT 0,
+    processing_error TEXT,
     tags TEXT,
-    ocr_text TEXT
+    ocr_text TEXT,
+    hidden_from_people INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS faces (
@@ -16,14 +18,16 @@ CREATE TABLE IF NOT EXISTS faces (
     bbox_json TEXT,
     embedding_blob BLOB,
     person_id TEXT,
-    confirmed INTEGER DEFAULT 0
+    confirmed INTEGER DEFAULT 0,
+    face_thumbnail_path TEXT
 );
 
 CREATE TABLE IF NOT EXISTS people (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     confirmed_name TEXT,
-    representative_face_id TEXT REFERENCES faces(id)
+    representative_face_id TEXT REFERENCES faces(id),
+    hidden INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS events (

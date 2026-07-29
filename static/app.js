@@ -82,7 +82,7 @@ async function uploadZip(file) {
   try {
     const r = await fetch('/api/ingest/zip', { method: 'POST', body: fd });
     const data = await r.json();
-    showToast(`Ingested ${data.ingested} photos, skipped ${data.skipped}`);
+    showToast(`Ingested ${data.ingested} photos, skipped ${data.skipped}. Click "Process All" to run the pipeline.`);
     refreshStats();
   } catch (e) {
     showToast('Upload failed: ' + e.message);
@@ -96,7 +96,7 @@ async function uploadFiles(files) {
   try {
     const r = await fetch('/api/ingest/files', { method: 'POST', body: fd });
     const data = await r.json();
-    showToast(`Ingested ${data.ingested} photos, skipped ${data.skipped}`);
+    showToast(`Ingested ${data.ingested} photos, skipped ${data.skipped}. Click "Process All" to run the pipeline.`);
     refreshStats();
   } catch (e) {
     showToast('Upload failed: ' + e.message);
@@ -105,7 +105,8 @@ async function uploadFiles(files) {
 
 processBtn.addEventListener('click', async () => {
   const folder = folderInput.value.trim();
-  if (!folder && !processBtn.dataset.ingest) {
+  const totalPhotos = parseInt(document.getElementById('stat-photos').textContent, 10) || 0;
+  if (!folder && totalPhotos === 0) {
     showToast('Enter a folder path first.');
     return;
   }

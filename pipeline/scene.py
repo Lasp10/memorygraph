@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -23,30 +24,34 @@ SCENE_LABELS = [
 _model = None
 _chroma_client = None
 _chroma_collection = None
+_model_lock = threading.Lock()
+_chroma_lock = threading.Lock()
 
 
 def get_model():
     global _model
-    if _model is None:
-        from sentence_transformers import SentenceTransformer
-        _model = SentenceTransformer("clip-ViT-B-32")
-        logger.info("CLIP model loaded")
-    return _model
+    with _model_lock:
+        if _model is None:
+            from sentence_transformers import SentenceTransformer
+            _model = SentenceTransformer("clip-ViT-B-32")
+            logger.info("CLIP model loaded")
+        return _model
 
 
 def get_chroma_collection():
     global _chroma_client, _chroma_collection
-    if _chroma_collection is None:
-        import chromadb
-        db_dir = Path(__file__).parent.parent / "chroma_db"
-        db_dir.mkdir(exist_ok=True)
-        _chroma_client = chromadb.PersistentClient(path=str(db_dir))
-        _chroma_collection = _chroma_client.get_or_create_collection(
-            name="media_embeddings",
-            metadata={"hnsw:space": "cosine"},
-        )
-        logger.info("ChromaDB collection ready")
-    return _chroma_collection
+    with _chroma_lock:
+        if _chroma_collection is None:
+            import chromadb
+            db_dir = Path(__file__).parent.parent / "chroma_db"
+            db_dir.mkdir(exist_ok=True)
+            _chroma_client = chromadb.PersistentClient(path=str(db_dir))
+            _chroma_collection = _chroma_client.get_or_create_collection(
+                name="media_embeddings",
+                metadata={"hnsw:space": "cosine"},
+            )
+            logger.info("ChromaDB collection ready")
+        return _chroma_collection
 
 
 def tag_scenes(limit: int = 0) -> dict:
@@ -55,9 +60,11 @@ def tag_scenes(limit: int = 0) -> dict:
 
     with get_connection() as conn:
         query = "SELECT id, filepath, date_taken FROM media WHERE tags IS NULL"
+        params: tuple = ()
         if limit:
-            query += f" LIMIT {limit}"
-        rows = list(conn.execute(query))
+            query += " LIMIT ?"
+            params = (limit,)
+        rows = list(conn.execute(query, params))
 
     if not rows:
         return {"tagged": 0}
@@ -66,6 +73,11 @@ def tag_scenes(limit: int = 0) -> dict:
     label_embeddings = model.encode(SCENE_LABELS, convert_to_numpy=True, normalize_embeddings=True)
 
     tagged = 0
+    batch_ids: list[str] = []
+    batch_embeddings: list[list[float]] = []
+    batch_metadatas: list[dict] = []
+    tag_updates: list[tuple[str, str]] = []
+
     for row in rows:
         media_id = row["id"]
         filepath = row["filepath"]
@@ -79,39 +91,28 @@ def tag_scenes(limit: int = 0) -> dict:
             top_indices = np.argsort(scores)[::-1]
             tags = [SCENE_LABELS[i] for i in top_indices if scores[i] > 0.22][:3]
 
-            # Store in ChromaDB
-            existing = collection.get(ids=[media_id])
-            chroma_meta = {
+            batch_ids.append(media_id)
+            batch_embeddings.append(img_embedding.tolist())
+            batch_metadatas.append({
                 "media_id": media_id,
                 "tags": ",".join(tags),
                 "date_taken": row["date_taken"] or "",
-            }
-            if existing["ids"]:
-                collection.update(
-                    ids=[media_id],
-                    embeddings=[img_embedding.tolist()],
-                    metadatas=[chroma_meta],
-                )
-            else:
-                collection.add(
-                    ids=[media_id],
-                    embeddings=[img_embedding.tolist()],
-                    metadatas=[chroma_meta],
-                )
-
-            with get_connection() as conn:
-                conn.execute(
-                    "UPDATE media SET tags = ? WHERE id = ?",
-                    (json.dumps(tags), media_id),
-                )
+            })
+            tag_updates.append((json.dumps(tags), media_id))
 
             tagged += 1
             logger.info(f"Tagged {filepath}: {tags}")
 
         except Exception as e:
             logger.error(f"Scene tagging failed for {filepath}: {e}")
-            with get_connection() as conn:
-                conn.execute("UPDATE media SET tags = ? WHERE id = ?", ("[]", media_id))
+            tag_updates.append(("[]", media_id))
+
+    if batch_ids:
+        collection.upsert(ids=batch_ids, embeddings=batch_embeddings, metadatas=batch_metadatas)
+
+    if tag_updates:
+        with get_connection() as conn:
+            conn.executemany("UPDATE media SET tags = ? WHERE id = ?", tag_updates)
 
     return {"tagged": tagged}
 

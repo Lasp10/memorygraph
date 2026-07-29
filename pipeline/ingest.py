@@ -30,12 +30,12 @@ def _file_hash(path: Path) -> str:
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
-    return h.hexdigest()[:16]
+    return h.hexdigest()
 
 
 def _extract_exif_date(image: Image.Image) -> str | None:
     try:
-        exif_data = image._getexif()
+        exif_data = image.getexif()
         if not exif_data:
             return None
         tag_map = {v: k for k, v in ExifTags.TAGS.items()}
@@ -71,6 +71,8 @@ def ingest_folder(folder_path: str) -> dict:
         existing = {row["filepath"] for row in conn.execute("SELECT filepath FROM media")}
 
         for src in sorted(folder.rglob("*")):
+            if "__MACOSX" in src.parts or src.name.startswith("._"):
+                continue
             if src.suffix.lower() not in SUPPORTED_EXTENSIONS:
                 skipped += 1
                 continue
@@ -105,6 +107,7 @@ def ingest_folder(folder_path: str) -> dict:
                         datetime.now(timezone.utc).isoformat(),
                     ),
                 )
+                existing.add(str(dest))
                 ingested += 1
                 logger.info(f"Ingested: {src.name}")
 
@@ -127,12 +130,21 @@ def ingest_uploaded_files(files: list[tuple[str, bytes]]) -> dict:
         shutil.rmtree(extract_dir, ignore_errors=True)
 
 
+def _safe_extract(zf: zipfile.ZipFile, extract_dir: Path):
+    extract_root = extract_dir.resolve()
+    for member in zf.namelist():
+        member_path = (extract_dir / member).resolve()
+        if member_path != extract_root and extract_root not in member_path.parents:
+            raise ValueError(f"Unsafe zip member path: {member}")
+    zf.extractall(extract_dir)
+
+
 def ingest_zip(zip_path: Path) -> dict:
     extract_dir = UPLOADS_DIR / "zip_extract_tmp"
     extract_dir.mkdir(parents=True, exist_ok=True)
     try:
         with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(extract_dir)
+            _safe_extract(zf, extract_dir)
         return ingest_folder(str(extract_dir))
     finally:
         shutil.rmtree(extract_dir, ignore_errors=True)

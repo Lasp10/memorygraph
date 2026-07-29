@@ -29,7 +29,12 @@ SCENE_KEYWORDS = [
 
 def _get_all_people() -> list[dict]:
     with get_connection() as conn:
-        return [dict(r) for r in conn.execute("SELECT id, name, confirmed_name FROM people")]
+        return [
+            dict(r)
+            for r in conn.execute(
+                "SELECT id, name, confirmed_name FROM people WHERE hidden = 0 OR hidden IS NULL"
+            )
+        ]
 
 
 def _get_media_details(media_ids: list[str]) -> list[dict]:
@@ -125,23 +130,33 @@ def search(query: str, top_k: int = 20) -> list[dict]:
         for mid in get_media_for_period(period):
             graph_media_ids[mid] += 2
 
-    # Vector search via ChromaDB
+    # Vector search via ChromaDB — only used as a fallback for open-ended semantic
+    # queries. Structured graph matches (a known person's name, a tag, a decade) are
+    # facts; CLIP text-vs-image similarity for something like a person's name carries
+    # no real signal (it scores ~0.22-0.26 for *any* photo regardless of who's in it),
+    # so blending it in on top of a real person match just pads results with
+    # unrelated photos of other people.
     vector_scores: dict[str, float] = {}
-    try:
-        collection = get_chroma_collection()
-        query_embedding = encode_query(query)
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=min(top_k, max(collection.count(), 1)),
-            include=["distances", "metadatas"],
-        )
-        if results["ids"] and results["ids"][0]:
-            for mid, dist in zip(results["ids"][0], results["distances"][0]):
-                # ChromaDB cosine distance → similarity
-                similarity = 1.0 - dist
-                vector_scores[mid] = similarity
-    except Exception as e:
-        logger.error(f"Vector search failed: {e}")
+    if not graph_media_ids:
+        try:
+            collection = get_chroma_collection()
+            query_embedding = encode_query(query)
+            results = collection.query(
+                query_embeddings=[query_embedding],
+                n_results=min(top_k, max(collection.count(), 1)),
+                include=["distances", "metadatas"],
+            )
+            if results["ids"] and results["ids"][0]:
+                for mid, dist in zip(results["ids"][0], results["distances"][0]):
+                    # ChromaDB cosine distance → similarity
+                    similarity = 1.0 - dist
+                    # Chroma always returns n_results regardless of actual relevance, so
+                    # drop weak matches instead of padding results with unrelated photos.
+                    # Matches the threshold already used for scene-tag assignment.
+                    if similarity > 0.22:
+                        vector_scores[mid] = similarity
+        except Exception as e:
+            logger.error(f"Vector search failed: {e}")
 
     # Union and rank
     all_ids = set(graph_media_ids.keys()) | set(vector_scores.keys())

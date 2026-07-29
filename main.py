@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).parent
 UPLOADS_DIR = BASE_DIR / "uploads"
 THUMBNAILS_DIR = BASE_DIR / "thumbnails"
+MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500MB
 
 app = FastAPI(title="MemoryGraph", version="0.1.0")
 
@@ -63,12 +64,17 @@ async def api_ingest(request: FolderIngestRequest):
 
 @app.post("/api/ingest/zip")
 async def api_ingest_zip(file: UploadFile = File(...)):
-    tmp_path = UPLOADS_DIR / f"upload_{file.filename}"
+    safe_name = Path(file.filename or "upload.zip").name
+    tmp_path = UPLOADS_DIR / f"upload_{safe_name}"
     try:
-        content = await file.read()
+        content = await file.read(MAX_UPLOAD_SIZE + 1)
+        if len(content) > MAX_UPLOAD_SIZE:
+            raise HTTPException(status_code=413, detail="Uploaded zip exceeds max size")
         tmp_path.write_bytes(content)
         result = ingest.ingest_zip(tmp_path)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Zip ingest error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -77,9 +83,16 @@ async def api_ingest_zip(file: UploadFile = File(...)):
 @app.post("/api/ingest/files")
 async def api_ingest_files(files: list[UploadFile] = File(...)):
     try:
-        file_data = [(f.filename, await f.read()) for f in files]
+        file_data = []
+        for f in files:
+            content = await f.read(MAX_UPLOAD_SIZE + 1)
+            if len(content) > MAX_UPLOAD_SIZE:
+                raise HTTPException(status_code=413, detail=f"{f.filename} exceeds max upload size")
+            file_data.append((f.filename, content))
         result = ingest.ingest_uploaded_files(file_data)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"File ingest error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -133,6 +146,16 @@ async def api_process_faces():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/process/face-thumbnails")
+async def api_backfill_face_thumbnails():
+    try:
+        count = faces.backfill_face_thumbnails()
+        return {"generated": count}
+    except Exception as e:
+        logger.error(f"Face thumbnail backfill error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/people")
 async def api_get_people():
     try:
@@ -154,6 +177,17 @@ async def api_name_person(person_id: str, request: NameRequest):
         return {"ok": True}
     except Exception as e:
         logger.error(f"Name person error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/people/{person_id}/hide")
+async def api_hide_person(person_id: str):
+    try:
+        faces.set_person_hidden(person_id, True)
+        graph.build_graph()
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Hide person error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

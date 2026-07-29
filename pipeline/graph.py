@@ -12,11 +12,6 @@ logger = logging.getLogger(__name__)
 
 _graph: nx.DiGraph | None = None
 
-DECADE_MAP = {
-    str(d): f"{d}s"
-    for d in range(1950, 2030, 10)
-}
-
 PLACE_LABELS = {
     "beach", "mountains", "park", "backyard", "living room", "kitchen",
     "school", "church", "restaurant", "camping",
@@ -94,11 +89,9 @@ def build_graph() -> nx.DiGraph:
         media_by_id[m["id"]] = dict(m)
 
     # APPEARS_IN edges
-    person_media: dict[str, list[str]] = defaultdict(list)
     for face in face_rows:
         if face["person_id"] and face["media_id"]:
             G.add_edge(face["person_id"], face["media_id"], edge_type="APPEARS_IN")
-            person_media[face["person_id"]].append(face["media_id"])
 
     # CO-APPEARS_WITH edges (two people in same photo)
     media_people: dict[str, list[str]] = defaultdict(list)
@@ -116,24 +109,28 @@ def build_graph() -> nx.DiGraph:
                     G.add_edge(p2, p1, edge_type="CO-APPEARS_WITH")
                     seen_pairs.add(pair)
 
-    # Auto-cluster events if none exist
-    existing_event_ids = {r["event_id"] for r in event_media_rows}
-    if not existing_event_ids:
-        _auto_cluster_events(G, media_by_id, media_people)
-    else:
-        # Load existing events and edges
-        for ev in event_rows:
-            G.add_node(ev["id"], node_type="Event", name=ev["name"], place=ev["place"])
-        for em in event_media_rows:
-            G.add_edge(em["media_id"], em["event_id"], edge_type="PART_OF")
+    # Load existing events and their media links
+    for ev in event_rows:
+        G.add_node(ev["id"], node_type="Event", name=ev["name"], place=ev["place"])
+    for em in event_media_rows:
+        G.add_edge(em["media_id"], em["event_id"], edge_type="PART_OF")
 
-    # Refresh event nodes in case we just created them
+    # Auto-cluster any media not yet assigned to an event (runs every build, not just once)
+    already_clustered_media = {em["media_id"] for em in event_media_rows}
+    unclustered_media_by_id = {
+        mid: m for mid, m in media_by_id.items() if mid not in already_clustered_media
+    }
+    if unclustered_media_by_id:
+        _auto_cluster_events(G, unclustered_media_by_id, media_people)
+
+    # Refresh event nodes/edges in case _auto_cluster_events just created new ones
     with get_connection() as conn:
         for ev in conn.execute("SELECT * FROM events"):
             if ev["id"] not in G:
                 G.add_node(ev["id"], node_type="Event", name=ev["name"], place=ev["place"])
         for em in conn.execute("SELECT * FROM event_media"):
-            G.add_edge(em["media_id"], em["event_id"], edge_type="PART_OF")
+            if not G.has_edge(em["media_id"], em["event_id"]):
+                G.add_edge(em["media_id"], em["event_id"], edge_type="PART_OF")
             # OCCURRED_AT / OCCURRED_IN edges
             ev_data = G.nodes.get(em["event_id"], {})
             place = ev_data.get("place")
